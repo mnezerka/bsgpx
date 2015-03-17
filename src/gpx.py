@@ -8,7 +8,6 @@ import unittest
 import xml.dom.minidom
 
 class GeoUtils:
-
     # One degree in meters:
     ONE_DEGREE = 1000. * 10000.8 / 90.
 
@@ -18,17 +17,18 @@ class GeoUtils:
     MODE_3D = 1
 
     @staticmethod
-    def length(locations=None, mode=MODE_2D):
+    def to_rad(x):
+        return x / 180.0 * math.pi
 
+    @staticmethod
+    def length(locations=None, mode=MODE_2D):
         if locations is None:
             return 0
-
-        harversine
+        #harversine
 
         length = 0
         lastLoc = None
         for i in xrange(len(locations)):
-            print i
             if lastLoc is not None:
                 if mode == GeoUtils.MODE_3D:
                     d = locations[i].distance3d(lastLoc)
@@ -37,6 +37,25 @@ class GeoUtils:
                 length += d
             lastLoc = locations[i]
         return length
+
+    @staticmethod
+    def distanceHarversine(lat1, lon1, lat2, lon2):
+        """
+        Haversine distance between two points.
+
+        Implemented from http://www.movable-type.co.uk/scripts/latlong.html
+        """
+        d_lat = GeoUtils.to_rad(lat1 - lat2)
+        d_lon = GeoUtils.to_rad(lon1 - lon2)
+        lat1 = GeoUtils.to_rad(lat1)
+        lat2 = GeoUtils.to_rad(lat2)
+
+        a = math.sin(d_lat/2) * math.sin(d_lat/2) + \
+            math.sin(d_lon/2) * math.sin(d_lon/2) * math.cos(lat1) * math.cos(lat2)
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        d = GeoUtils.EARTH_RADIUS * c
+
+        return d
 
     @staticmethod
     def distance(lat1, lon1, ele1, lat2, lon2, ele2):
@@ -69,11 +88,13 @@ class GeoLocation:
         self.lon = longitude
         self.ele = elevation
 
+
     def distance2d(self, location):
         if not location:
             return None
 
-        return GeoUtils.distance(self.lat, self.lon, None, location.lat, location.lon, None)
+        #return GeoUtils.distance(self.lat, self.lon, None, location.lat, location.lon, None)
+        return GeoUtils.distanceHarversine(self.lat, self.lon, location.lat, location.lon)
 
     def distance3d(self, location):
         if not location:
