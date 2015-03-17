@@ -11,7 +11,8 @@ class GeoUtils:
     # One degree in meters:
     ONE_DEGREE = 1000. * 10000.8 / 90.
 
-    EARTH_RADIUS = 6371 * 1000
+    # Earth radius in meters 
+    EARTH_RADIUS = 6371.8 * 1000
 
     MODE_2D = 0
     MODE_3D = 1
