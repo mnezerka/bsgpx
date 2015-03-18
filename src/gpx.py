@@ -4,8 +4,48 @@ import datetime
 import math
 import os.path
 import re
+import json
 import unittest
+import urllib
 import xml.dom.minidom
+
+class ElevationProvider:
+    pass
+
+class ElevationProviderGoogle:
+
+    ELEVATION_BASE_URL = 'https://maps.googleapis.com/maps/api/elevation/json'
+
+class ElevationProviderMapQuest:
+    """MapQuest
+
+    http://open.mapquestapi.com/elevation/
+    """
+
+    ELEVATION_BASE_URL = 'http://open.mapquestapi.com/elevation/v1/profile'
+
+    def __init__(self):
+        self._key = ''
+
+    def getElevationData(self, points):
+
+        print points
+        urlArgs = {
+            'key': self._key,
+            'latLngCollection': points
+        } 
+
+        url = self.ELEVATION_BASE_URL + '?' + urllib.urlencode(urlArgs)
+        print url
+         
+        response = json.load(urllib.urlopen(url))
+        print response
+
+        #for resultSet in response['results']:
+            #print resultSet
+            #elevationArray.append(resultset['elevation'])
+
+        #&callback=handleHelloWorldResponse&shapeFormat=raw&latLngCollection=39.74012,-104.9849,39.7995,-105.7237,39.6404,-106.3736
 
 class GeoUtils:
     # One degree in meters:
@@ -76,6 +116,50 @@ class GeoUtils:
 
         return math.sqrt(distance2d ** 2 + (ele1 - ele2) ** 2)
 
+    @staticmethod
+    def smoothElevationData(elevations):
+        result = []
+
+        for n, ele in enumerate(elevations):
+            # modify elevation according to previous and next item(s)
+            if n > 0:
+                if n < (len(elevations) - 1):
+                    result.append(elevations[n - 1] * 0.3 + elevations[n] * 0.4  + elevations[n + 1] * 0.3)
+                else:
+                    # last item
+                    result.append(elevations[n - 1] * 0.3 + elevations[n] * 0.7)
+            else:
+                # first item
+                if n < (len(elevations) - 1):
+                    result.append(elevations[n] * 0.7  + elevations[n + 1] * 0.3)
+                else:
+                    result.append(elevations[n])
+
+        return result 
+
+    @staticmethod
+    def getUpDownHill(elevations, smooth=True):
+
+        #return previous_ele*.3 + current_ele*.4 + next_ele*.3
+        #smoothed_elevations = list(map(__filter, range(size)))
+
+        upHill = 0.0
+        downHill = 0.0
+
+        if smooth:
+            elevations = GeoUtils.smoothElevationData(elevations)
+
+        for n, ele in enumerate(elevations):
+
+            delta = elevations[n] - elevations[n - 1] if n > 0 else 0
+            #print delta
+
+            if delta > 0:
+                upHill += delta
+            else:
+                downHill += abs(delta)
+
+        return (upHill, downHill)
 
 class GeoLocation:
     """ Generic geographical location """
@@ -128,6 +212,12 @@ class GpxTrackSegment:
     def length3d(self):
         return GeoUtils.length(self.points, GeoUtils.MODE_3D)
 
+    def getUpDownHill(self, smooth=True):
+        elevations = list(map(lambda point:point.ele, self.points))
+        result = GeoUtils.getUpDownHill(elevations, smooth)
+
+        return result
+
 class GpxTrack:
     def __init__(self, name=None, description=None, number=None):
         self.name = name
@@ -147,6 +237,49 @@ class GpxTrack:
             length += segment.length3d()
         return length
 
+    def getDuration(self):
+        result = 0
+        for segment in self.segments:
+            result += segment.getDuration()
+        return result
+
+    def getUpDownHill(self, smooth=True):
+
+        # default
+        upHill = 0
+        downHill = 0
+
+        if not self.segments:
+            return (upHill, downHill)
+
+        for s in self.segments:
+            (sUpHill, sDownHill) = s.getUpDownHill(smooth)
+
+            upHill += sUpHill
+            downHill += sDownHill
+
+        return (upHill, downHill)
+
+    def getElevationExtremes(self):
+        return None
+
+        if not self.segments:
+            return MinimumMaximum(None, None)
+
+        elevations = []
+
+        for s in self.segments:
+            (_min, _max) = s.getElevationExtremes()
+            if _min is not None:
+                elevations.append(_min)
+            if _max is not None:
+                elevations.append(_max)
+
+        if len(elevations) == 0:
+            return MinimumMaximum(None, None)
+
+        return MinimumMaximum(min(elevations), max(elevations))
+    
 class Gpx:
     def __init__(self):
         self.creator = None
@@ -482,14 +615,25 @@ class UnitTests(unittest.TestCase):
         l1 = GeoLocation(0, 0)
         l2 = GeoLocation(1, 0)
         l = GeoUtils.length([l1, l2])
-        print l
+
+    def testGeoUtilsElevations(self):
+        (up, down) = GeoUtils.getUpDownHill([100])
+        self.assertEquals(up, 0)
+        self.assertEquals(down, 0)
+
+        (up, down) = GeoUtils.getUpDownHill([100, 200], False)
+        self.assertEquals(up, 100)
+        self.assertEquals(down, 0)
+
+        (up, down) = GeoUtils.getUpDownHill([200, 100, 10, 80, 50], False)
+        self.assertEquals(up, 70)
+        self.assertEquals(down, 220)
 
     def testReaderXml(self):
         t = GpxReaderXml.parseTime('2015-02-23T19:22:18.061Z')
         t = GpxReaderXml.parseTime('2015-02-23T19:22:18Z')
 
     def testReaderXmlGpx(self):
-
         data = ('<gpx>\n'
                 '  <name>TestName</name>\n'
                 '  <desc>TestDescription</desc>\n'
@@ -552,7 +696,10 @@ class UnitTests(unittest.TestCase):
         self.assertEquals(tp1.lat, 1)
         self.assertEquals(tp1.lon, 2)
 
-        
+    def testElevationMapQuest(self):
+        ep = ElevationProviderMapQuest()
+        ep.getElevationData([0, 0])
+         
 if __name__ == '__main__':
     unittest.main()
 
