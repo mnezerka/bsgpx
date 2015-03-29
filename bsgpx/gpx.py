@@ -1,201 +1,16 @@
-
-import argparse
 import datetime
-import math
 import os.path
 import re
-import json
 import unittest
-import urllib
 import xml.dom.minidom
+import geo
 
-class ElevationProvider:
-    pass
-
-class ElevationProviderGoogle:
-
-    ELEVATION_BASE_URL = 'https://maps.googleapis.com/maps/api/elevation/json'
-
-class ElevationProviderMapQuest:
-    """MapQuest
-
-    http://open.mapquestapi.com/elevation/
-    """
-
-    ELEVATION_BASE_URL = 'http://open.mapquestapi.com/elevation/v1/profile'
-
-    def __init__(self):
-        self._key = ''
-
-    def getElevationData(self, points):
-
-        print points
-        urlArgs = {
-            'key': self._key,
-            'latLngCollection': points
-        } 
-
-        url = self.ELEVATION_BASE_URL + '?' + urllib.urlencode(urlArgs)
-        print url
-         
-        response = json.load(urllib.urlopen(url))
-        print response
-
-        #for resultSet in response['results']:
-            #print resultSet
-            #elevationArray.append(resultset['elevation'])
-
-        #&callback=handleHelloWorldResponse&shapeFormat=raw&latLngCollection=39.74012,-104.9849,39.7995,-105.7237,39.6404,-106.3736
-
-class GeoUtils:
-    # One degree in meters:
-    ONE_DEGREE = 1000. * 10000.8 / 90.
-
-    # Earth radius in meters 
-    EARTH_RADIUS = 6371.8 * 1000
-
-    MODE_2D = 0
-    MODE_3D = 1
-
-    @staticmethod
-    def to_rad(x):
-        return x / 180.0 * math.pi
-
-    @staticmethod
-    def length(locations=None, mode=MODE_2D):
-        if locations is None:
-            return 0
-        #harversine
-
-        length = 0
-        lastLoc = None
-        for i in xrange(len(locations)):
-            if lastLoc is not None:
-                if mode == GeoUtils.MODE_3D:
-                    d = locations[i].distance3d(lastLoc)
-                else:
-                    d = locations[i].distance2d(lastLoc)
-                length += d
-            lastLoc = locations[i]
-        return length
-
-    @staticmethod
-    def distanceHarversine(lat1, lon1, lat2, lon2):
-        """
-        Haversine distance between two points.
-
-        Implemented from http://www.movable-type.co.uk/scripts/latlong.html
-        """
-        d_lat = GeoUtils.to_rad(lat1 - lat2)
-        d_lon = GeoUtils.to_rad(lon1 - lon2)
-        lat1 = GeoUtils.to_rad(lat1)
-        lat2 = GeoUtils.to_rad(lat2)
-
-        a = math.sin(d_lat/2) * math.sin(d_lat/2) + \
-            math.sin(d_lon/2) * math.sin(d_lon/2) * math.cos(lat1) * math.cos(lat2)
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-        d = GeoUtils.EARTH_RADIUS * c
-
-        return d
-
-    @staticmethod
-    def distance(lat1, lon1, ele1, lat2, lon2, ele2):
-        """
-        Distance between two points. If elevation is None compute a 2d distance
-
-        """
-
-        coef = math.cos(lat1 / 180.0 * math.pi)
-        x = lat1 - lat2
-        y = (lon1 - lon2) * coef
-
-        distance2d = math.sqrt(x * x + y * y) * GeoUtils.ONE_DEGREE
-
-        if ele1 is None or ele2 is None or ele1 == ele2:
-            return distance2d
-
-        return math.sqrt(distance2d ** 2 + (ele1 - ele2) ** 2)
-
-    @staticmethod
-    def smoothElevationData(elevations):
-        result = []
-
-        for n, ele in enumerate(elevations):
-            # modify elevation according to previous and next item(s)
-            if n > 0:
-                if n < (len(elevations) - 1):
-                    result.append(elevations[n - 1] * 0.3 + elevations[n] * 0.4  + elevations[n + 1] * 0.3)
-                else:
-                    # last item
-                    result.append(elevations[n - 1] * 0.3 + elevations[n] * 0.7)
-            else:
-                # first item
-                if n < (len(elevations) - 1):
-                    result.append(elevations[n] * 0.7  + elevations[n + 1] * 0.3)
-                else:
-                    result.append(elevations[n])
-
-        return result 
-
-    @staticmethod
-    def getUpDownHill(elevations, smooth=True):
-
-        #return previous_ele*.3 + current_ele*.4 + next_ele*.3
-        #smoothed_elevations = list(map(__filter, range(size)))
-
-        upHill = 0.0
-        downHill = 0.0
-
-        if smooth:
-            elevations = GeoUtils.smoothElevationData(elevations)
-
-        for n, ele in enumerate(elevations):
-
-            delta = elevations[n] - elevations[n - 1] if n > 0 else 0
-            #print delta
-
-            if delta > 0:
-                upHill += delta
-            else:
-                downHill += abs(delta)
-
-        return (upHill, downHill)
-
-class GeoLocation:
-    """ Generic geographical location """
-
-    lat = None
-    lon = None
-    ele = None
-
-    def __init__(self, latitude, longitude, elevation=None):
-        self.lat = latitude
-        self.lon = longitude
-        self.ele = elevation
-
-
-    def distance2d(self, location):
-        if not location:
-            return None
-
-        #return GeoUtils.distance(self.lat, self.lon, None, location.lat, location.lon, None)
-        return GeoUtils.distanceHarversine(self.lat, self.lon, location.lat, location.lon)
-
-    def distance3d(self, location):
-        if not location:
-            return None
-
-        return GeoUtils.distance(self.lat, self.lon, self.ele, location.lat, location.lon, location.ele)
-
-    def __str__(self):
-        return '[loc:%s,%s@%s]' % (self.lat, self.lon, self.ele)
-
-class GpxTrackPoint(GeoLocation):
+class GpxTrackPoint(geo.Location):
     def __init__(self, latitude=0, longitude=0, elevation=None, time=None, symbol=None, comment=None,
             horizontal_dilution=None, vertical_dilution=None, position_dilution=None, speed=None,
             name=None):
 
-        GeoLocation.__init__(self, latitude, longitude, elevation)
+        geo.Location.__init__(self, latitude, longitude, elevation)
 
         self.time = time
         self.symbol = symbol
@@ -207,14 +22,14 @@ class GpxTrackSegment:
         self.points = points if points else []
 
     def length2d(self):
-        return GeoUtils.length(self.points, GeoUtils.MODE_2D)
+        return geo.length(self.points, geo.MODE_2D)
 
     def length3d(self):
-        return GeoUtils.length(self.points, GeoUtils.MODE_3D)
+        return geo.length(self.points, geo.MODE_3D)
 
     def getUpDownHill(self, smooth=True):
         elevations = list(map(lambda point:point.ele, self.points))
-        result = GeoUtils.getUpDownHill(elevations, smooth)
+        result = geo.getUpDownHill(elevations, smooth)
 
         return result
 
@@ -605,30 +420,6 @@ class GpxReaderXml(GpxReader):
 class UnitTests(unittest.TestCase):
     """Unit tests definition"""
 
-    def testLocation(self):
-        l = GeoLocation(23, 56)
-        self.assertEqual(l.lat, 23)
-        self.assertEqual(l.lon, 56)
-        self.assertIsNone(l.ele)
-
-    def testGeoUtils(self):
-        l1 = GeoLocation(0, 0)
-        l2 = GeoLocation(1, 0)
-        l = GeoUtils.length([l1, l2])
-
-    def testGeoUtilsElevations(self):
-        (up, down) = GeoUtils.getUpDownHill([100])
-        self.assertEquals(up, 0)
-        self.assertEquals(down, 0)
-
-        (up, down) = GeoUtils.getUpDownHill([100, 200], False)
-        self.assertEquals(up, 100)
-        self.assertEquals(down, 0)
-
-        (up, down) = GeoUtils.getUpDownHill([200, 100, 10, 80, 50], False)
-        self.assertEquals(up, 70)
-        self.assertEquals(down, 220)
-
     def testReaderXml(self):
         t = GpxReaderXml.parseTime('2015-02-23T19:22:18.061Z')
         t = GpxReaderXml.parseTime('2015-02-23T19:22:18Z')
@@ -696,10 +487,6 @@ class UnitTests(unittest.TestCase):
         self.assertEquals(tp1.lat, 1)
         self.assertEquals(tp1.lon, 2)
 
-    def testElevationMapQuest(self):
-        ep = ElevationProviderMapQuest()
-        ep.getElevationData([0, 0])
-         
 if __name__ == '__main__':
     unittest.main()
 
